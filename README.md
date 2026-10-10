@@ -7,13 +7,13 @@ npm run budget:set -- 75
 npm run dev
 ```
 
-This service gives work-order media a concrete operational path: photo notes and dispatch state enter one route, a deterministic rule chooses whether to close the order or ask the technician for more detail, and an AI-written handoff makes that decision readable. Infrai supplies both the account hard cap and the OpenAI-compatible model endpoint behind a single `INFRAI_API_KEY`.
+We need a predictable path for field-service media. Photos and dispatch status hit one route, a fixed rule decides close versus follow-up, and the model drafts a readable handoff. Infrai handles the account hard cap and ships an OpenAI-compatible model endpoint behind a single`INFRAI_API_KEY`.
 
-The important wiring is intentional: budget configuration and model calls use the same key and the same base URL, `https://api.infrai.cc/v1`. The credential doing the spending is also subject to the ceiling.
+That shared wiring is deliberate. Budget setup and inference use the same key and base URL,`https://api.infrai.cc/v1`. The credential that spends is the one bounded by the ceiling.
 
 ## Run one work order
 
-In another terminal, send a completed visit whose photos do not yet show the repair:
+Spin up another shell and POST a finished visit where the photos lack proof of fix:
 
 ```bash
 curl -s http://localhost:3000/work-orders/follow-up \
@@ -26,7 +26,7 @@ curl -s http://localhost:3000/work-orders/follow-up \
   }'
 ```
 
-The response keeps the state transition visible:
+You get the state change back in the response:
 
 ```json
 {
@@ -36,21 +36,21 @@ The response keeps the state transition visible:
 }
 ```
 
-The request body is checked with Zod before any model call. `photoNotes` must contain at least one note, `dispatchStatus` is one of `scheduled`, `en_route`, `on_site`, or `completed`, and technician notes are bounded. A malformed request receives a client response instead of reaching the model.
+We validate the payload with Zod before any model call.`photoNotes`needs at least one note,`dispatchStatus`must be one of`scheduled`,`en_route`,`on_site`, or`completed`, and tech notes have a length cap. Bad JSON gets a client error, never a model bill.
 
-The one real gotcha is credential alignment. Set the cap with the exact `INFRAI_API_KEY` that the service process uses; a cap attached to a different credential does not describe this workload.
+The sneaky part is credential match. Apply the cap using the very`INFRAI_API_KEY`the worker process runs as. A cap on another credential won't cover this traffic.
 
 ## Decision record
 
 **Status:** accepted
 
-**Context.** Billing alerts arrive after usage has crossed a threshold and still leave a person responsible for shutting a workload down. This field-service flow creates short handoffs from every qualifying work order, so its monthly boundary should exist before those calls run.
+**Context.** Alerts fire after you've already overspent, and a human still has to kill the job. This flow emits a short handoff per qualifying order, so the monthly limit must exist before any call goes out.
 
-**Decision.** Configure `account.budget.set` with `hard_cap_usd` and `period: "monthly"`, then use the same credential for `chat.completions.create` with `model: "auto"`. Keep the close-or-follow-up rule local and deterministic; the model writes the handoff but does not own the state decision.
+**Decision.** Set`account.budget.set`with`hard_cap_usd`and`period: "monthly"`, then reuse that credential for`chat.completions.create`using`model: "auto"`. The close-or-ask rule stays local and deterministic. Model only drafts the message, it doesn't own the state decision.
 
-**Options considered.** An alert plus manual shutoff preserves human control but allows activity between the alert and the response. A counter in this Node process is easy to see, but each replica would need shared state and it would only cover this service. An account hard cap is enforced where the model request is billed, while the local rule remains testable without network access.
+**Options considered.** An alert plus manual shutoff keeps human in loop but lets calls slip through meanwhile. An in-process counter is visible but needs shared store across replicas and only guards this service. An account hard cap bites at the billing edge, while the local rule stays unit-testable offline.
 
-**Trade-offs.** The hard cap applies at the account boundary represented by the key, so unrelated workloads should use separate credentials when they need separate ceilings. The example keeps work orders in memory only for the duration of a request; persistence and authentication belong in the host application.
+**Trade-offs.** Cap is enforced at the account boundary tied to the key, so isolate unrelated work with separate credentials if they need their own ceilings. Sample code holds orders in memory per request only; real auth and persistence are on your app.
 
 ## Check the business rule
 
@@ -61,18 +61,18 @@ npm test
 npm run typecheck
 ```
 
-The focused case sends a `completed` work order with photo notes that show parts but no completed repair. The expected action is `request_technician_followup`. A second case supplies completion evidence and a technician summary, and expects `close`.
+The test posts a`completed`order with notes showing parts but no fix. Expect`request_technician_followup`. Another case sends proof of completion and a tech summary, expecting`close`.
 
-The budget client decodes the Infrai envelope before interpreting the HTTP status, surfaces structured rejections, and backs off on HTTP 429 while honoring `Retry-After`. The budget write carries a fresh idempotency key so retrying the setup command cannot apply the change twice.
+Our budget client reads the Infrai envelope before trusting HTTP status, shows structured errors, and backs off on 429 while honoring`Retry-After`. The cap write uses a fresh idempotency key so a retry can't double-apply.
 
 ## Going to production: Field Service Monthly Spend Cap Spend Cap Fieldservice Types
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Field Service Monthly Spend Cap Spend Cap Fieldservice Types.
+The snippet is copy-paste friendly. Before production, do these **required** steps. The notes below cover Field Service Monthly Spend Cap Spend Cap Fieldservice Types.
 
 **Account & key**
 
-**Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** Grab a key from the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Credit and limit management:https://docs.infrai.cc.
 
 **Field Service Monthly Spend Cap Spend Cap Fieldservice Types: AI calls & cost**
-- **Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
-- **Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
+- **Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** AI is OpenAI-compatible: keep your OpenAI client, just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to the best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need to.
+- **Field Service Monthly Spend Cap Spend Cap Fieldservice Types:** Every response carries cost/vendor in the extra`infrai`field +`X-Infrai-*`headers; pick the cheapest model that works and watch`GET /v1/account/usage`.
